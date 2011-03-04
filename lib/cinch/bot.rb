@@ -45,8 +45,6 @@ module Cinch
     attr_reader :config
     # @return [IRC]
     attr_reader :irc
-    # @return [Logger]
-    attr_accessor :logger
     # @return [Array<Channel>] All channels the bot currently is in
     attr_reader :channels
     # @return [String] the bot's hostname
@@ -425,7 +423,7 @@ module Cinch
           channel.unsync_all
         end # reset state of all channels
 
-        @logger.debug "Connecting to #{@config.server}:#{@config.port}"
+        debug "Connecting to #{@config.server}:#{@config.port}"
         @irc = IRC.new(self)
         @irc.connect
 
@@ -441,7 +439,7 @@ module Cinch
           # Sleep for a few seconds before reconnecting to prevent being
           # throttled by the IRC server
           wait = 2**@reconnects
-          @logger.debug "Waiting #{wait} seconds before reconnecting"
+          debug "Waiting #{wait} seconds before reconnecting"
           sleep wait
         end
       end while @config.reconnect and not @quitting
@@ -475,7 +473,15 @@ module Cinch
     # (see Logger::Logger#debug)
     # @see Logger::Logger#debug
     def debug(msg)
-      @logger.debug(msg)
+      @config.loggers.each {|logger| logger.debug(msg)}
+    end
+
+    def log(msg, kind = :general)
+      @config.loggers.each {|logger| logger.log(msg, kind)}
+    end
+
+    def log_exception(e)
+      @config.loggers.each {|logger| logger.log_exception(e)}
     end
 
     # @return [Boolean] True if the bot reports ISUPPORT violations as
@@ -486,7 +492,6 @@ module Cinch
 
     # @yield
     def initialize(&b)
-      @logger = Logger::FormattedLogger.new($stderr)
       @events = {}
       @config = BotConfiguration.new
 
@@ -508,6 +513,24 @@ module Cinch
       end
 
       instance_eval(&b) if block_given?
+    end
+
+    # @return [Logger]
+    # @deprecated
+    attr_accessor :logger
+    undef_method "logger"
+    undef_method "logger="
+    def logger
+      $stderr.puts "Deprecation warning: Beginning with version 1.2.0, Bot#logger should not be used anymore."
+      puts caller
+      @config.loggers.first
+    end
+
+    def logger=(logger)
+      $stderr.puts "Deprecation warning: Beginning with version 1.2.0, Bot#logger= should not be used anymore."
+      puts caller
+
+      @config.loggers = [logger]
     end
 
     # The bot's nickname.
@@ -608,7 +631,7 @@ module Cinch
             @callback.instance_exec(msg, *args, *bargs, &block)
           end
         rescue => e
-          @logger.log_exception(e)
+          log_exception(e)
         ensure
           @handler_threads.delete Thread.current
         end

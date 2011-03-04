@@ -32,6 +32,7 @@ module Cinch
           :local_host => nil,
           :timeouts => TimeoutsConfiguration.new,
           :ping_interval => 120,
+          :loggers => [Logger::FormattedLogger.new($stderr)],
         }
     end
   end

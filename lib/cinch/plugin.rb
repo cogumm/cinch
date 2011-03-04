@@ -233,7 +233,7 @@ module Cinch
                     begin
                       instance.__send__(timer.method)
                     rescue => e
-                      bot.logger.log_exception(e)
+                      bot.log_exception(e)
                     end
                   }
 

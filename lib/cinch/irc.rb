@@ -25,15 +25,15 @@ module Cinch
           tcp_socket = TCPSocket.new(@bot.config.server, @bot.config.port, @bot.config.local_host)
         end
       rescue Timeout::Error
-        @bot.logger.debug("Timed out while connecting")
+        @bot.debug("Timed out while connecting")
         return
       rescue => e
-        @bot.logger.log_exception(e)
+        @bot.log_exception(e)
         return
       end
 
       if @bot.config.ssl == true || @bot.config.ssl == false
-        @bot.logger.debug "Deprecation warning: Beginning from version 1.1.0, @config.ssl should be a set of options, not a boolean value!"
+        @bot.debug "Deprecation warning: Beginning from version 1.1.0, @config.ssl should be a set of options, not a boolean value!"
       end
 
       if @bot.config.ssl == true || (@bot.config.ssl.is_a?(SSLConfiguration) && @bot.config.ssl.use)
@@ -51,7 +51,7 @@ module Cinch
         else
           ssl_context.verify_mode = OpenSSL::SSL::VERIFY_NONE
         end
-        @bot.logger.debug "Using SSL with #{@bot.config.server}:#{@bot.config.port}"
+        @bot.debug "Using SSL with #{@bot.config.server}:#{@bot.config.port}"
 
         @socket = OpenSSL::SSL::SSLSocket.new(tcp_socket, ssl_context)
         @socket.sync = true
@@ -75,15 +75,15 @@ module Cinch
               line = Cinch.encode_incoming(line, @bot.config.encoding)
               parse line
             rescue => e
-              @bot.logger.log_exception(e)
+              @bot.log_exception(e)
             end
           end
         rescue Timeout::Error
-          @bot.logger.debug "Connection timed out."
+          @bot.debug "Connection timed out."
         rescue EOFError
-          @bot.logger.debug "Lost connection."
+          @bot.debug "Lost connection."
         rescue => e
-          @bot.logger.log_exception(e)
+          @bot.log_exception(e)
         end
 
         @socket.close
@@ -95,7 +95,7 @@ module Cinch
         begin
           @queue.process!
         rescue => e
-          @bot.logger.log_exception(e)
+          @bot.log_exception(e)
         end
       end
 
@@ -115,7 +115,7 @@ module Cinch
     # @api private
     # @return [void]
     def parse(input)
-      @bot.logger.log(input, :incoming) if @bot.config.verbose
+      @bot.log(input, :incoming) if @bot.config.verbose
       msg          = Message.new(input, @bot)
       events       = [[:catchall]]
 
