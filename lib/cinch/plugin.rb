@@ -4,7 +4,9 @@ module Cinch
 
     module ClassMethods
       # @api private
-      Match = Struct.new(:pattern, :use_prefix, :use_suffix, :method)
+      Match = Struct.new(:pattern, :use_prefix, :use_suffix, :method, :group)
+      # @api private
+      Group = Struct.new(:name, :options)
       # @api private
       Listener = Struct.new(:event, :method)
       # @api private
@@ -21,9 +23,23 @@ module Cinch
       #   pattern.
       # @return [void]
       def match(pattern, options = {})
-        options = {:use_prefix => true, :use_suffix => true, :method => :execute}.merge(options)
+        group = options[:group] || :default
+        group = (@__cinch_groups || {})[group]
+
+        options = {:use_prefix => true, :use_suffix => true, :method => :execute, :group => :default}.merge(group.options).merge(options)
+
+        # TODO :all group
+        # TODO emit warning if the group does not exist
+        options = group.options.merge(options) # match options are more important than group options
+
         @__cinch_matches ||= []
-        @__cinch_matches << Match.new(pattern, options[:use_prefix], options[:use_suffix], options[:method])
+        @__cinch_matches << Match.new(pattern, options[:use_prefix], options[:use_suffix], options[:method], options[:group])
+      end
+
+      # TODO documentation
+      def match_group(name, options = {})
+        @__cinch_groups ||= {}
+        @__cinch_groups[name] = Group.new(name, options)
       end
 
       # Events to listen to.
@@ -185,27 +201,59 @@ module Cinch
         prefix = @__cinch_prefix || bot.config.plugins.prefix
         suffix = @__cinch_suffix || bot.config.plugins.suffix
 
-        @__cinch_matches.each do |pattern|
-          _prefix = pattern.use_prefix ? prefix : nil
-          _suffix = pattern.use_suffix ? suffix : nil
+        @__cinch_groups ||= {}
 
-          pattern_to_register = Pattern.new(_prefix, pattern.pattern, _suffix)
-          react_on = @__cinch_react_on || :message
 
-          bot.debug "[plugin] #{plugin_name}: Registering executor with pattern `#{pattern_to_register.inspect}`, reacting on `#{react_on}`"
+        exec_proc = proc { |plugin, pattern, message, args|
+          if plugin.respond_to?(pattern.method)
+            method = plugin.method(pattern.method)
+            arity = method.arity - 1
+            if arity > 0
+              args = args[0..arity - 1]
+            elsif arity == 0
+              args = []
+            end
+            plugin.class.__hooks(:pre, :match).each {|hook| plugin.__send__(hook.method, message)}
+            method.call(message, *args)
+            plugin.class.__hooks(:post, :match).each {|hook| plugin.__send__(hook.method, message)}
+          end
+        }
 
-          bot.on(react_on, pattern_to_register, instance, pattern) do |message, plugin, pattern, *args|
-            if plugin.respond_to?(pattern.method)
-              method = plugin.method(pattern.method)
-              arity = method.arity - 1
-              if arity > 0
-                args = args[0..arity - 1]
-              elsif arity == 0
-                args = []
+        @__cinch_matches.group_by {|m| m.group}.each do |group, patterns|
+          group = @__cinch_groups[group]
+          # TODO error out if group does not exist
+          if group.options[:execute_first_match_only]
+            patterns_to_register = patterns.map {|pattern|
+              _prefix = pattern.use_prefix ? prefix : nil
+              _suffix = pattern.use_suffix ? suffix : nil
+
+              Pattern.new(_prefix, pattern.pattern, _suffix)
+            }
+
+            react_on = @__cinch_react_on || :message
+
+            bot.on(react_on, patterns_to_register, instance, patterns, patterns_to_register) do |message, plugin, patterns, compiled_patterns, *args|
+              index = compiled_patterns.find_index { |compiled_pattern|
+                message.match(compiled_pattern.to_r(message), nil)
+              }
+
+              pattern = patterns[index]
+
+              exec_proc.call(plugin, pattern, message, args)
+            end
+          else
+            patterns.each do |pattern|
+              _prefix = pattern.use_prefix ? prefix : nil
+              _suffix = pattern.use_suffix ? suffix : nil
+
+              pattern_to_register = Pattern.new(_prefix, pattern.pattern, _suffix)
+              react_on = @__cinch_react_on || :message
+
+              bot.debug "[plugin] #{plugin_name}: Registering executor with pattern `#{pattern_to_register.inspect}`, reacting on `#{react_on}`"
+
+              bot.on(react_on, pattern_to_register, instance, pattern) do |message, plugin, pattern, *args|
+                exec_proc.call(plugin, pattern, message, args)
               end
-              plugin.class.__hooks(:pre, :match).each {|hook| plugin.__send__(hook.method, message)}
-              method.call(message, *args)
-              plugin.class.__hooks(:post, :match).each {|hook| plugin.__send__(hook.method, message)}
             end
           end
         end
