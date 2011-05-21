@@ -492,7 +492,7 @@ module Cinch
 
     def on_433(msg, events)
       # ERR_NICKNAMEINUSE
-      @bot.generate_next_nick!(msg.params[1])
+      @bot.nick = @bot.generate_next_nick!(msg.params[1])
     end
 
     def on_671(msg, events)
