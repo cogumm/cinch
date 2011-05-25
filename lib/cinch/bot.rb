@@ -30,7 +30,7 @@ require "cinch/mode_parser"
 require "cinch/cache_manager"
 require "cinch/channel_manager"
 require "cinch/user_manager"
-require "cinch/plugin_manager"
+require "cinch/timer"
 
 require "cinch/configuration"
 require "cinch/bot_configuration"
@@ -40,7 +40,7 @@ require "cinch/timeouts_configuration"
 
 
 module Cinch
-
+  # @attr nick
   class Bot
     include Helpers
 
@@ -62,9 +62,8 @@ module Cinch
     attr_reader :realname
     # @return [Time]
     attr_reader :signed_on_at
-    # @return [Array<Thread>]
-    # @api private
-    attr_reader :handler_threads
+    # @return [Array<Plugin>] All registered plugins
+    attr_reader :plugins
     # @return [Boolean] whether the bot is in the process of disconnecting
     attr_reader :quitting
     # @return [UserManager]
@@ -76,6 +75,12 @@ module Cinch
     # @return [Boolean]
     # @api private
     attr_accessor :last_connection_was_successful
+    # @return [Callback]
+    # @api private
+    attr_reader :callback
+    # @return [Hash<:event => Array<Handler>>]
+    # @api private
+    attr_reader :handlers
 
     # @group Helper methods
 
@@ -309,7 +314,7 @@ module Cinch
                    end
                  end
         debug "[on handler] Registering handler with pattern `#{pattern.inspect}`, reacting on `#{event}`"
-        handler = Handler.new(event, pattern, args, block)
+        handler = Handler.new(self, event, pattern, args, block)
         handlers << handler
         (@handlers[event] ||= []) << handler
       end
@@ -324,6 +329,8 @@ module Cinch
 
     # @param [Handler, Array<Handler>] *handlers The handlers to unregister.
     # @return [Handler, nil] The unregistered handler
+    # @api private
+    # @see Handler#unregister
     def unregister_handlers(*handlers)
       handlers = *handlers.flatten
       handlers.each do |handler|
@@ -349,7 +356,7 @@ module Cinch
             captures = []
           end
 
-          invoke(handler.block, handler.args, msg, captures, arguments)
+          handler.call(msg, captures, arguments)
         end
       end
     end
@@ -399,11 +406,6 @@ module Cinch
       raw command
     end
 
-    # Connects the bot to a server.
-    #
-    # @param [Boolean] plugins Automatically register plugins from
-    #   `@config.plugins.plugins`?
-    # @return [void]
     # Connects the bot to a server.
     #
     # @param [Boolean] plugins Automatically register plugins from
@@ -485,14 +487,12 @@ module Cinch
     # @yield
     def initialize(&b)
       @logger = Logger::FormattedLogger.new($stderr)
-      @handlers = {}
       @config = BotConfiguration.new
-
+      @handlers = {}
       @semaphores_mutex = Mutex.new
       @semaphores = Hash.new { |h,k| h[k] = Mutex.new }
       @callback = Callback.new(self)
       @channels = []
-      @handler_threads = []
       @quitting = false
 
       @user_manager = UserManager.new(self)
@@ -530,9 +530,6 @@ module Cinch
     # @overload nick
     #   @return [String]
     # @return [String]
-    attr_accessor :nick
-    undef_method "nick"
-    undef_method "nick="
     def nick
       @config.nick
     end
@@ -551,6 +548,7 @@ module Cinch
     # @param [String] base The base nick to start trying from
     # @api private
     # @return String
+    # @since 1.2.0
     def generate_next_nick!(base = nil)
       nicks = @config.nicks || []
 
@@ -612,21 +610,6 @@ module Cinch
         handlers.select { |handler|
           msg.match(handler.pattern.to_r(msg), type)
         }
-      end
-    end
-
-    def invoke(block, args, msg, match, arguments)
-      bargs = match + arguments
-      @handler_threads << Thread.new do
-        begin
-          catch(:halt) do
-            @callback.instance_exec(msg, *args, *bargs, &block)
-          end
-        rescue => e
-          @logger.log_exception(e)
-        ensure
-          @handler_threads.delete Thread.current
-        end
       end
     end
   end

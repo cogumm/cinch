@@ -9,12 +9,16 @@ module Cinch
     attr_reader :isupport
     # @return [Bot]
     attr_reader :bot
+    # @return [Symbol] The detected network or `:other` if no network
+    #   was detected.
     attr_reader :network
     def initialize(bot)
       @bot      = bot
       @isupport = ISupport.new
     end
 
+    # @api private
+    # @since 1.2.0
     def setup
       @registration = []
       @network = :other
@@ -22,6 +26,7 @@ module Cinch
       @in_lists      = Set.new
     end
 
+    # @api private
     def connect
       tcp_socket = nil
       begin
@@ -68,21 +73,23 @@ module Cinch
       @queue = MessageQueue.new(@socket, @bot)
     end
 
+    # @api private
+    # @since 1.2.0
     def send_login
       message "PASS #{@bot.config.password}" if @bot.config.password
       message "NICK #{@bot.generate_next_nick!}"
       message "USER #{@bot.config.user} 0 * :#{@bot.config.realname}"
     end
 
+    # @api private
+    # @since 1.2.0
     def start_reading_thread
       Thread.new do
         begin
           while line = @socket.readline
-            begin
+            rescue_exception do
               line = Cinch.encode_incoming(line, @bot.config.encoding)
               parse line
-            rescue => e
-              @bot.logger.log_exception(e)
             end
           end
         rescue Timeout::Error
@@ -95,20 +102,23 @@ module Cinch
 
         @socket.close
         @bot.dispatch(:disconnect)
-        @bot.handler_threads.each { |t| t.join(10); t.kill }
+        @bot.handlers.values.flatten.each { |h| h.stop  }
       end
     end
 
+    # @api private
+    # @since 1.2.0
     def start_sending_thread
       Thread.new do
-        begin
+        rescue_exception do
           @queue.process!
-        rescue => e
-          @bot.logger.log_exception(e)
         end
       end
     end
 
+    # @api private
+    # @since 1.2.0
+    # @since 1.2.0
     def start_ping_thread
       Thread.new do
         while true
@@ -122,6 +132,7 @@ module Cinch
     # Establish a connection.
     #
     # @return [void]
+    # @since 1.2.0
     def start
       setup
       connect
@@ -138,6 +149,7 @@ module Cinch
     # @api private
     # @return [void]
     def parse(input)
+      return if input.chomp.empty?
       @bot.logger.log(input, :incoming) if @bot.config.verbose
       msg          = Message.new(input, @bot)
       events       = [[:catchall]]
@@ -321,6 +333,18 @@ module Cinch
     def on_005(msg, events)
       # ISUPPORT
       @isupport.parse(*msg.params[1..-2].map {|v| v.split(" ")}.flatten)
+      if @isupport["NETWORK"] == "NGameTV"
+        # the NGameTV "IRC" server does not have proper prefixes but
+        # only nicks.
+        #
+        # PONGs do not include the argument we sent in a PING but the
+        # fixed string "chat.ngame.tv"
+        #
+        # If we send a PONG, the server responds with a PONG.
+        #
+        # Neither PING nor PONG have a prefix
+        @network = "ngametv"
+      end
     end
 
     def on_307(msg, events)

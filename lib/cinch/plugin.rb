@@ -92,8 +92,6 @@ module Cinch
         @__cinch_suffix = suffix || block
       end
 
-
-
       # Set which kind of messages to react on (i.e. call {#execute})
       #
       # @param [Symbol<:message, :channel, :private>] target React to all,
@@ -124,14 +122,16 @@ module Cinch
       #   def some_method
       #     Channel("#cinch-bots").send(Time.now.to_s)
       #   end
+      #
       # @param [Number] interval Interval in seconds
-      # @option options [Symbol] :method (:timer) Method to call
+      # @param [Proc] block A proc to execute
+      # @option options [Symbol] :method (:timer) Method to call (only if no proc is provided)
       # @option options [Boolean] :threaded (true) Call method in a thread?
       # @return [void]
-      def timer(interval, options = {})
+      def timer(interval, options = {}, &block)
         options = {:method => :timer, :threaded => true}.merge(options)
         @__cinch_timers ||= []
-        @__cinch_timers << Timer.new(interval, options[:method], options[:threaded], false)
+        @__cinch_timers << Timer.new(interval, block || options[:method], options[:threaded], false)
       end
 
       # Defines a hook which will be run before or after a handler is
@@ -237,33 +237,13 @@ module Cinch
         end
 
         (@__cinch_timers || []).each do |timer|
+          # TODO move debug message to instance method
           bot.debug "[plugin] #{__plugin_name}: Registering timer with interval `#{timer.interval}` for method `#{timer.method}`"
           bot.on :connect do
             next if timer.registered
+            instance.timer(timer.interval,
+                           {:method => timer.method, :threaded => timer.threaded})
             timer.registered = true
-            Thread.new do
-              bot.debug "registering timer..."
-              loop do
-                sleep timer.interval
-                if instance.respond_to?(timer.method)
-                  l = lambda {
-                    begin
-                      instance.__send__(timer.method)
-                    rescue => e
-                      bot.logger.log_exception(e)
-                    end
-                  }
-
-                  if timer.threaded
-                    Thread.new do
-                      l.call
-                    end
-                  else
-                    l.call
-                  end
-                end
-              end
-            end
           end
         end
 
